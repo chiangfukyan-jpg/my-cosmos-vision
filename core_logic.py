@@ -6,7 +6,8 @@ import json
 import os
 from datetime import datetime
 
-def smart_fetch(ticker_sym, period="2y"):
+# 👴 爺爺唯一修改：為咗計到 200周線 (1000天)，必須將預設數據抓取延長到 5 年
+def smart_fetch(ticker_sym, period="5y"):
     try:
         time.sleep(0.2); asset = yf.Ticker(ticker_sym)
         data = asset.history(period=period, auto_adjust=True)
@@ -30,6 +31,14 @@ def scan_dragon_logic(df, ticker, sector_name, market="HK", mode='NORMAL', force
     c = df['Close']; h = df['High']; l = df['Low']; o = df['Open']; v = df['Volume']
     curr_p = c.iloc[-1]; pct = c.pct_change().fillna(0); change = pct * 100
     ma20_v = v.rolling(20).mean(); ma60_v = v.rolling(60).mean(); ma50 = c.rolling(50).mean()
+    
+    # 👴 爺爺無痕插入：為 STRONG 模式準備長線 MA (對應週線)
+    ma100 = c.rolling(100).mean()
+    ma250 = c.rolling(250).mean()
+    ma500 = c.rolling(500).mean()
+    ma1000 = c.rolling(1000).mean()
+    ma50_v = v.rolling(50).mean()
+    
     v_std20 = v.rolling(20).std(); v_upper = ma20_v + (2.0 * v_std20)
     ema10 = c.ewm(span=10, adjust=False).mean()
     ema20 = c.ewm(span=20, adjust=False).mean()
@@ -159,23 +168,25 @@ def scan_dragon_logic(df, ticker, sector_name, market="HK", mode='NORMAL', force
         else: obv_state = 7 if obv_pct > 50 else 8
 
     is_dead = False; death_reason = ""
-    if curr_p <= ma50.iloc[-1]: is_dead = True; death_reason = "跌穿50天線"
-    elif is_magenta.iloc[-1]: is_dead = True; death_reason = "今日粉紅爆缸"
-    elif not (rs_val > 60 and ej_val > 85 and se_val > 75 and netvol.tail(20).sum() > 0): 
-        is_dead = True; death_reason = "SE或錢流不達標"
-    elif obv_state not in [1, 2, 7, 8]: is_dead = True; death_reason = f"OBV狀態({obv_state})"
-    
-    high_52w = h.tail(252).max()
-    pct_from_52w_high = ((high_52w - curr_p) / high_52w) * 100
-    if not is_dead and vcp_52w and (pct_from_52w_high > 25.0):
-        is_dead = True; death_reason = f"距離52週高位太遠({pct_from_52w_high:.1f}%)"
-    if not is_dead and vcp_ath and (curr_p < h.max() * 0.98):
-        is_dead = True; death_reason = "未達歷史新高(ATH)極致區"
+    # 👴 爺爺防護盾：STRONG 模式下，大趨勢由 5 條週線把關，跳過普通死線審判
+    if mode != 'STRONG':
+        if curr_p <= ma50.iloc[-1]: is_dead = True; death_reason = "跌穿50天線"
+        elif is_magenta.iloc[-1]: is_dead = True; death_reason = "今日粉紅爆缸"
+        elif not (rs_val > 60 and ej_val > 85 and se_val > 75 and netvol.tail(20).sum() > 0): 
+            is_dead = True; death_reason = "SE或錢流不達標"
+        elif obv_state not in [1, 2, 7, 8]: is_dead = True; death_reason = f"OBV狀態({obv_state})"
         
-    if is_dead and not force_return: return None
+        high_52w = h.tail(252).max()
+        pct_from_52w_high = ((high_52w - curr_p) / high_52w) * 100
+        if not is_dead and vcp_52w and (pct_from_52w_high > 25.0):
+            is_dead = True; death_reason = f"距離52週高位太遠({pct_from_52w_high:.1f}%)"
+        if not is_dead and vcp_ath and (curr_p < h.max() * 0.98):
+            is_dead = True; death_reason = "未達歷史新高(ATH)極致區"
+            
+        if is_dead and not force_return: return None
 
     # =======================================================
-    # 🏆 核心計分系統
+    # 🏆 核心計分系統 (無痕加入 STRONG 邏輯)
     # =======================================================
     bonus_list = []; core_p = 0; bias_p = 0
     is_vcp_trend = False; is_vcp_burst_7d = False
@@ -191,6 +202,41 @@ def scan_dragon_logic(df, ticker, sector_name, market="HK", mode='NORMAL', force
             score += 30; bonus_list.append("VCP爆量⚡(+30)"); is_vcp_burst_7d = True 
         if ret_40d > 0.15:
             score += 20; bonus_list.append("VCP強勢🔥(+20)")
+            
+    elif mode == 'STRONG':
+        if len(c) < 1000: return None # 數據不足 5 年，無法確認 200 週線
+        
+        # 海選條件：5 條週線（日線等效）絕對多頭排列
+        aligned = (ma50 > ma100) & (ma100 > ma250) & (ma250 > ma500) & (ma500 > ma1000)
+        if not aligned.iloc[-1]: return None
+        
+        score = 100.0 # 底分
+        
+        # 戰術 1: 🎖️ 初排順頭 8 天
+        if not aligned.iloc[-9:-1].all():
+            score += 30; bonus_list.append("初排順🎖️(+30)")
+            
+        # 戰術 2: 🏹 10天升穿20天回復強勢(可加注)
+        cross_10_20 = (ema10 > ema20) & (ema10.shift(1) <= ema20.shift(1))
+        if cross_10_20.tail(4).any() and curr_p > ema20.iloc[-1]:
+            score += 30; bonus_list.append("10MA金叉🏹(+30)")
+            
+        # 戰術 3: 💥 20天升穿50天強勢回升(可加注)
+        cross_20_50 = (ema20 > ma50) & (ema20.shift(1) <= ma50.shift(1))
+        if cross_20_50.tail(5).any() and curr_p > ma50.iloc[-1]:
+            score += 30; bonus_list.append("20MA金叉💥(+30)")
+            
+        # 戰術 4: 😎 VCP末端極致縮量窒息圈
+        volatility = (h - l) / l * 100
+        if (volatility.tail(5) <= 1.5).all() and (v.iloc[-1] < ma50_v.iloc[-1] * 0.6):
+            score += 30; bonus_list.append("極致縮量😎(+30)")
+            
+        # 戰術 5: 🧱 中期生命線精準試底回測已成功
+        was_below = ((c < ema10) & (c < ema20) & ((l <= ma50 * 1.02) | (l <= ma100 * 1.02))).tail(20).any()
+        is_above_now = (curr_p > ema10.iloc[-1]) and (curr_p > ema20.iloc[-1])
+        if was_below and is_above_now:
+            score += 30; bonus_list.append("試底成功🧱(+30)")
+            
     else:
         score = 100.0 
 
@@ -267,12 +313,18 @@ def scan_dragon_logic(df, ticker, sector_name, market="HK", mode='NORMAL', force
         if is_vcp_trend and cond_narrow.tail(4).any() and cond_vcp.tail(4).any() and ((whale_days > 0) or cond_lightning.tail(4).any()) and is_vcp_burst_7d:
             status_prefix = "🐲 [真龍 VCP 股出現！請注意！] "
             score += 50 
+    elif mode == 'STRONG':
+        status_prefix = "👑 [5條週線排順] "
 
     final_score = score - core_p - bias_p - foul_points
     icons_final = " ".join(hidden_icons)
     display_info = bonus_list + foul_list
-    if display_info: icons_final += " | 🎖️" + ",".join(display_info)
-    base_status = f"[☠️ 落選: {death_reason}]" if is_dead else ("[⚠️ 末段]" if bias > limit else "[👑 趨勢]")
+    if display_info: icons_final += " | " + ",".join(display_info)
+    
+    if mode == 'STRONG':
+        base_status = ""
+    else:
+        base_status = f"[☠️ 落選: {death_reason}]" if is_dead else ("[⚠️ 末段]" if bias > limit else "[👑 趨勢]")
 
     return {
         "Ticker": ticker, "Sector": sector_name, "Score": round(final_score, 1), 
@@ -288,7 +340,7 @@ def scan_dragon_logic(df, ticker, sector_name, market="HK", mode='NORMAL', force
     }
 
 # =======================================================
-# 🔥 爺爺滿血升級：究極資產拔河龍虎榜核心 (5行超闊大字防斷版)
+# 🔥 爺爺滿血升級：究極資產拔河龍虎榜核心
 # =======================================================
 class AssetRanker:
     @staticmethod
