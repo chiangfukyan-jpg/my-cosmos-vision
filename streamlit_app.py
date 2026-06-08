@@ -110,7 +110,7 @@ with st.sidebar:
     st.caption("👴 爺爺的操盤矩陣 V188.5")
 
 # ==========================================
-# 🌌 模式一：原本的龍魂雷達系統 (原封不動)
+# 🌌 模式一：原本的龍魂雷達系統 (完美保留+新增 STRONG)
 # ==========================================
 if operation_mode == "🐉 龍魂神殿雷達系統":
     MEMORY_FILE = "dragon_memory.json"
@@ -136,6 +136,7 @@ if operation_mode == "🐉 龍魂神殿雷達系統":
         </style>
     """, unsafe_allow_html=True)
 
+    # 爺爺保證：一條毛都無改過嘅副圖邏輯
     def add_energy_subplots(fig, df, dates_chart, row_start):
         var1 = df['Close'] - df['Low']; var2 = df['High'] - df['Close']; var3 = np.maximum(df['High'] - df['Low'], 0.001)
         buyvol = np.where(var3 > 0, df['Volume'] * var1 / var3, 0)
@@ -164,18 +165,27 @@ if operation_mode == "🐉 龍魂神殿雷達系統":
     if 'target' not in st.session_state: st.session_state.target = 'NONE'
     if 'scan_mode' not in st.session_state: st.session_state.scan_mode = 'NORMAL'
 
+    # 👑 首頁四大神器：加入「強勢股排列」
     if st.session_state.page == 'HOME':
         st.markdown("<h1 style='text-align:center;font-size:4rem;margin-top:80px;color:#FFD700;'>🐲 龍魂戰略總部</h1>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         if c1.button("🐉 龍魂神殿 (普通掃描)"): 
             st.session_state.page = 'DRAGON'; st.session_state.scan_mode = 'NORMAL'; st.rerun()
         if c2.button("📈 VCP 獵龍 (高勝率模式)"): 
             st.session_state.page = 'DRAGON'; st.session_state.scan_mode = 'VCP'; st.rerun()
         if c3.button("🐢 海龜加注"): 
             st.info("海龜 模式運作中"); st.session_state.page = 'DRAGON'; st.session_state.scan_mode = 'NORMAL'; st.rerun()
+        if c4.button("🔥 強勢股排列"): 
+            st.session_state.page = 'DRAGON'; st.session_state.scan_mode = 'STRONG'; st.rerun()
 
     elif st.session_state.page == 'DRAGON':
-        mode_display = "📈 VCP 高勝率獵龍" if st.session_state.scan_mode == 'VCP' else "🐉 龍魂神殿 5.0 旗艦雷達"
+        if st.session_state.scan_mode == 'STRONG':
+            mode_display = "🔥 強勢股排列 (週線多頭)"
+        elif st.session_state.scan_mode == 'VCP':
+            mode_display = "📈 VCP 高勝率獵龍"
+        else:
+            mode_display = "🐉 龍魂神殿 5.0 旗艦雷達"
+            
         st.markdown(f"<h1 style='text-align:center; color:#00FFCC;'>{mode_display}</h1>", unsafe_allow_html=True)
         
         nav = st.columns(6)
@@ -183,13 +193,22 @@ if operation_mode == "🐉 龍魂神殿雷達系統":
         if nav[1].button("🇭🇰 港股"): st.session_state.target = 'HK'
         if nav[2].button("🇺🇸 美股"): st.session_state.target = 'US'
         if nav[3].button("📦 ETF"): st.session_state.target = 'ETF'
-        if nav[4].button("🔍 個股"): st.session_state.target = 'SINGLE'
+        
+        # 👑 完美閹割：如果是 STRONG 模式，不顯示「個股」掣
+        if st.session_state.scan_mode != 'STRONG':
+            if nav[4].button("🔍 個股"): st.session_state.target = 'SINGLE'
         
         st.markdown("---")
         c_ath, c_btn = st.columns([3, 1])
+        
+        is_ath_mode = False
+        vcp_52w = False
+        
         with c_ath: 
-            is_ath_mode = st.checkbox("🔥 啟動 ATH 歷史新高極致過濾")
-            vcp_52w = st.checkbox("🎯 啟動 MM 原汁原味 52週高位 25% 內過濾")
+            # 👑 完美閹割：如果是 STRONG 模式，不顯示任何 Checkbox
+            if st.session_state.scan_mode != 'STRONG':
+                is_ath_mode = st.checkbox("🔥 啟動 ATH 歷史新高極致過濾")
+                vcp_52w = st.checkbox("🎯 啟動 MM 原汁原味 52週高位 25% 內過濾")
         
         selected_tickers = []; market_mode = "HK"; btn_radar = False
 
@@ -202,7 +221,7 @@ if operation_mode == "🐉 龍魂神殿雷達系統":
                     st.session_state.active_file = f; st.success(f"✅ 已選定 {f}")
             with c_btn: btn_radar = st.button("📡 啟動 5.0 雙線雷達", use_container_width=True)
 
-        elif st.session_state.target == 'SINGLE':
+        elif st.session_state.target == 'SINGLE' and st.session_state.scan_mode != 'STRONG':
             st.write("### 🔍 個股自訂掃描：")
             col1, col2 = st.columns([3, 1])
             with col1: single_t = st.text_input("輸入股票代號 (例: NVDA, 0700.HK, TSLA)", "").upper().strip()
@@ -265,12 +284,15 @@ if operation_mode == "🐉 龍魂神殿雷達系統":
                 
                 for i, (t, sec) in enumerate(selected_tickers):
                     pb.progress((i+1)/len(selected_tickers))
-                    df = smart_fetch(t)
+                    # 💡 若是 STRONG 模式，必須拉長至 5y 來計算 200周線(1000天線)
+                    fetch_period = "5y" if st.session_state.scan_mode == 'STRONG' else "2y"
+                    df = smart_fetch(t, period=fetch_period)
                     if not df.empty:
                         if is_ath_mode and (df['Close'].iloc[-1] / df['High'].tail(252).max()) < 0.93: 
                             if not is_single_mode: continue
                         if check_stop_loss(df): sl_list.append(t)
                         
+                        # 把 st.session_state.scan_mode 傳給大腦
                         res = scan_dragon_logic(df, t, sec, market_mode, mode=st.session_state.scan_mode, force_return=is_single_mode, vcp_52w=vcp_52w, vcp_ath=is_ath_mode)
                         if res: results.append(res)
                 
@@ -344,6 +366,7 @@ if operation_mode == "🐉 龍魂神殿雷達系統":
                         ema10 = df_c['Close'].ewm(span=10, adjust=False).mean()
                         dates_chart = df_c.index.strftime('%Y-%m-%d').tolist()
                         
+                        # 👴 爺爺嚴格保留：一條毛都無改過嘅畫圖邏輯！
                         fig = make_subplots(rows=5, cols=1, shared_xaxes=True, row_heights=[0.45, 0.1, 0.2, 0.15, 0.1], vertical_spacing=0.02)
                         
                         fig.add_trace(go.Candlestick(x=dates_chart, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name="K線"), row=1, col=1)
